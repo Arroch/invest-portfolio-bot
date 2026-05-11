@@ -1,17 +1,62 @@
+# Целевая структура портфеля.
+# ВАЖНО: `weight` в каждом баккете = % от ВСЕГО портфеля (не от категории).
+# Сумма всех weight = 100. Категории — только для отображения и группировки.
+#
+# Способы привязки бумаг к баккету:
+#   tickers:           явный список тикеров (если несколько — веса внутри суммируются до 100)
+#   match:             фильтр по метаданным (bond_type / nominal_currency / class_code / maturity_*)
+#   cash_currencies:   валюты-как-«currency»-инструменты T-Invest попадают в этот баккет
+#                      (так XAU из «cash» абсорбируется в gold, а не в свободные деньги)
+#   is_cash:           ровно один баккет помечен — это «свободные деньги» (RUB + всё, что внутри)
+#                      В /rebalance value этого баккета = доступный кэш для покупок.
+
 base_currency: RUB
 
 categories:
   stocks:
-    weight: 60
-    tickers:
-      SBER: 40
-      LKOH: 30
-      YNDX: 30
+    buckets:
+      ru_etf:    { weight: 35, tickers: { TMOS@: 100 } }    # Фонд акций РФ
+      sber:      { weight: 4,  tickers: { SBER:  100 } }
+      yandex:    { weight: 4,  tickers: { YDEX:  100 } }
+      lukoil:    { weight: 4,  tickers: { LKOH:  100 } }
+      x5:        { weight: 4,  tickers: { X5:    100 } }    # X5 после редомициляции 2024
+      positive:  { weight: 2,  tickers: { POSI:  100 } }    # Группа Позитив
+      polyus:    { weight: 1,  tickers: { PLZL:  100 } }    # Полюс Золото
+      inter_rao: { weight: 2,  tickers: { IRAO:  100 } }
+      nornickel: { weight: 2,  tickers: { GMKN:  100 } }    # Норильский никель (акции)
+      hh:        { weight: 2,  tickers: { HEAD:  100 } }    # HeadHunter после редомициляции
+
   bonds:
-    weight: 30
-    tickers:
-      SU26240RMFS0: 100
+    buckets:
+      replaced_2_4:
+        weight: 5
+        match: { bond_type: replaced, maturity_min_years: 2, maturity_max_years: 4 }
+      replaced_4_6:
+        weight: 5
+        match: { bond_type: replaced, maturity_min_years: 4, maturity_max_years: 6 }
+      ofz_short:
+        weight: 4
+        match: { bond_type: ofz, maturity_max_years: 3 }
+      ofz_mid:
+        weight: 6
+        match: { bond_type: ofz, maturity_min_years: 3, maturity_max_years: 7 }
+      ofz_long:
+        weight: 5
+        match: { bond_type: ofz, maturity_min_years: 7 }
+
   gold:
-    weight: 10
-    tickers:
-      TGLD: 100
+    buckets:
+      gold:
+        weight: 10
+        # XAU-кэш из T-Invest попадает сюда, а не в свободные деньги.
+        cash_currencies: [XAU]
+        # Если появится золотой ETF — добавь его сюда:
+        # tickers: { TGLD: 100 }
+
+  cash:
+    buckets:
+      liquid:
+        weight: 5
+        is_cash: true
+        # TMON@ — фонд денежного рынка, считаем эквивалентом кэша.
+        tickers: { TMON@: 100 }

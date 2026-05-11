@@ -80,40 +80,69 @@ git pull && docker compose up -d --build
 
 ## Target schema
 
-```yaml
-base_currency: RUB
+Each category uses one of two modes — **never both**:
 
-categories:
-  stocks:
-    weight: 60          # % of total portfolio
-    tickers:
-      SBER: 40          # % of the category (stocks here)
-      LKOH: 30
-      YNDX: 30
-  bonds:
-    weight: 30
-    tickers:
-      SU26240RMFS0: 100
-  gold:
-    weight: 10
-    tickers:
-      TGLD: 100
+**(A) `tickers:`** — explicit map of ticker → weight (% of category).
+
+```yaml
+stocks:
+  weight: 60          # % of whole portfolio
+  tickers:
+    SBER: 70          # % within stocks
+    YDEX: 30
 ```
+
+**(B) `subcategories:`** — auto-buckets defined by `match:` filters. The bot reads instrument metadata and assigns each held instrument to the first matching subcategory (in YAML order). Explicit-ticker bindings always win over filter matches.
+
+```yaml
+bonds:
+  weight: 30
+  subcategories:
+    replaced:
+      weight: 40
+      match: { bond_type: replaced }
+    ofz_short:
+      weight: 30
+      match: { bond_type: ofz, maturity_max_years: 3 }
+    ofz_mid:
+      weight: 20
+      match: { bond_type: ofz, maturity_max_years: 7 }
+    ofz_long:
+      weight: 10
+      match: { bond_type: ofz }
+```
+
+Filter keys (AND-ed when combined):
+
+| key | values | notes |
+|---|---|---|
+| `bond_type` | `replaced` / `ofz` / `corp` / `any` | `replaced` = T-Invest `BOND_TYPE_REPLACED` (замещайки); `ofz` = class TQOB; `corp` = TQCB/TQTE/TQTD/TQIR |
+| `nominal_currency` | `rub` / `usd` / `eur` / `not_rub` | currency of the bond's nominal |
+| `class_code` | exact MOEX board code | e.g. `TQTF` for ETF |
+| `maturity_max_years` | number | matches if remaining maturity ≤ N years |
+| `maturity_min_years` | number | matches if remaining maturity > N years |
+
+A filter-mode bucket with no current holdings is allowed: it shows up in `/portfolio` as empty, and in `/rebalance` produces a warning ("add a matching ticker manually"). The bot never invents instruments to buy.
+
+A full example using a real account is in [`target.example.yaml`](target.example.yaml).
 
 Hard invariants (bot crashes on violation):
 
 - Category weights sum to 100.
-- Ticker weights within each category sum to 100.
-- Every ticker resolves on a MOEX board at startup.
-- A ticker is in at most one category.
+- Within a tickers-mode category, ticker weights sum to 100.
+- Within a subcategories-mode category, subcategory weights sum to 100.
+- Every explicit ticker resolves on a MOEX board at startup.
+- An explicit ticker appears in at most one bucket.
 
-The "real" portfolio weight of a ticker is `category_weight × ticker_weight / 100`. So SBER above targets `60 × 40 / 100 = 24%` of the whole portfolio.
+Portfolio weight of a bucket = `category_weight × bucket_weight / 100`. So with `stocks.weight=60` and `SBER=70`, SBER targets `60 × 70 / 100 = 42%` of the whole portfolio.
 
 ## Rebalance math
 
 - `total_after = current_portfolio_value + extra_cash`
-- For each target ticker: `gap = total_after × portfolio_weight / 100 − current_value`
-- Positive gaps (underweight) get pro-rata share of cash; overweight positions are left alone — **the bot never suggests sells**.
+- For each target **bucket**: `gap = total_after × portfolio_weight / 100 − current_value`
+- Positive gaps (underweight) get pro-rata share of cash; overweight buckets are left alone — **the bot never suggests sells**.
+- Within a multi-ticker bucket (filter mode), the bucket's allocation is split among held instruments **pro-rata to their current value** (so internal balance is preserved).
+- An empty filter-mode bucket is reported separately as "empty underweight" — the bot can't pick a ticker for you.
 - Allocations are floored to whole lots; the unspent remainder is reported as `Leftover`.
 
 ## Out of scope (MVP)

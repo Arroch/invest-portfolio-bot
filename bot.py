@@ -21,14 +21,20 @@ async def main() -> None:
     log = logging.getLogger("bot")
 
     target = load_target(cfg.target_file)
+    n_filter_buckets = sum(1 for b in target.buckets if b.has_filter)
     log.info(
-        "Target loaded: %d categories, %d tickers, base=%s",
-        len(target.categories), len(target.leaves), target.base_currency,
+        "Target loaded: %d categories, %d buckets (%d explicit, %d filter), base=%s",
+        len(target.categories),
+        len(target.buckets),
+        len(target.buckets) - n_filter_buckets,
+        n_filter_buckets,
+        target.base_currency,
     )
 
     async with AsyncClient(cfg.tinvest_token) as tinvest:
-        log.info("Resolving FIGIs for target tickers...")
-        figi_map = await resolve_instruments(tinvest, target.tickers)
+        explicit_tickers = target.explicit_tickers
+        log.info("Resolving FIGIs for %d explicit-target tickers...", len(explicit_tickers))
+        figi_map = await resolve_instruments(tinvest, explicit_tickers)
         for ticker, info in figi_map.items():
             log.info("  %s -> %s lot=%d %s", ticker, info.figi, info.lot, info.currency)
 
