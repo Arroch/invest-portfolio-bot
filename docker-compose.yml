@@ -1,7 +1,7 @@
 services:
   bot:
     build: .
-    container_name: portfolio-bot
+    container_name: invest-portfolio-bot
     restart: unless-stopped
     env_file: .env
     volumes:

@@ -1,4 +1,4 @@
-# portfolio-bot
+# invest-portfolio-bot
 
 Personal Telegram bot. Reads your T-Invest portfolio, compares with `target.yaml`, and suggests what to buy to reduce drift. **Read-only — never places orders.**
 
@@ -65,7 +65,7 @@ In Telegram:
 ### 7. Deploy on VPS
 
 ```bash
-git clone <repo> && cd portfolio-bot
+git clone <repo> && cd invest-portfolio-bot
 cp .env.example .env && $EDITOR .env
 $EDITOR target.yaml
 docker compose up -d --build
