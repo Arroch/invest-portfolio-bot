@@ -57,10 +57,11 @@ python bot.py
 
 In Telegram:
 
-- `/start` — intro
-- `/portfolio` — current state vs target
-- `/rebalance` — distribute current free cash across underweight positions
-- `/rebalance 50000` — distribute 50 000 of fresh money
+- `/start`, `/help` — intro
+- `/portfolio` — current state vs target (drift per category and bucket)
+- `/rebalance` — distribute current free cash across underweight buckets (keeps cash above `cash_target − 2 pp`)
+- `/rebalance 50000` — distribute 50 000 ₽ of fresh money on top of the cash pool
+- `/untracked` — positions outside of `target.yaml`
 
 ### 7. Deploy on VPS
 
@@ -80,39 +81,42 @@ git pull && docker compose up -d --build
 
 ## Target schema
 
-Each category uses one of two modes — **never both**:
+The target is a flat list of **buckets**, grouped under **categories** for display only. Each bucket's `weight` is a percentage of the **whole portfolio**, and the sum across all buckets must equal 100. Categories themselves carry no weight — they're just labels.
 
-**(A) `tickers:`** — explicit map of ticker → weight (% of category).
+A bucket binds value to instruments in one of three ways: explicit `tickers:`, a metadata `match:` filter, or `cash_currencies:` (route a non-base currency from T-Invest into this bucket). Exactly one bucket must be marked `is_cash: true` — the cash pool.
 
-```yaml
-stocks:
-  weight: 60          # % of whole portfolio
-  tickers:
-    SBER: 70          # % within stocks
-    YDEX: 30
-```
-
-**(B) `subcategories:`** — auto-buckets defined by `match:` filters. The bot reads instrument metadata and assigns each held instrument to the first matching subcategory (in YAML order). Explicit-ticker bindings always win over filter matches.
+See [target.yaml](target.yaml) for a complete commented example. Sketch:
 
 ```yaml
-bonds:
-  weight: 30
-  subcategories:
-    replaced:
-      weight: 40
-      match: { bond_type: replaced }
-    ofz_short:
-      weight: 30
-      match: { bond_type: ofz, maturity_max_years: 3 }
-    ofz_mid:
-      weight: 20
-      match: { bond_type: ofz, maturity_max_years: 7 }
-    ofz_long:
-      weight: 10
-      match: { bond_type: ofz }
+base_currency: RUB
+
+categories:
+  stocks:
+    buckets:
+      sber:   { weight: 4, tickers: { SBER: 100 } }
+      ru_etf: { weight: 35, tickers: { TMOS@: 100 } }
+
+  bonds:
+    buckets:
+      ofz_short: { weight: 4, match: { bond_type: ofz, maturity_max_years: 3 } }
+      ofz_long:  { weight: 5, match: { bond_type: ofz, maturity_min_years: 7 } }
+
+  gold:
+    buckets:
+      gold:
+        weight: 10
+        cash_currencies: [XAU]      # XAU from T-Invest cash lands here, not in `cash`
+        tickers: { GLDRUB_TOM: 100 }
+
+  cash:
+    buckets:
+      liquid:
+        weight: 5
+        is_cash: true
+        tickers: { TMON@: 100 }     # money-market fund counted as cash
 ```
 
-Filter keys (AND-ed when combined):
+Filter keys for `match:` (AND-ed when combined):
 
 | key | values | notes |
 |---|---|---|
@@ -122,28 +126,27 @@ Filter keys (AND-ed when combined):
 | `maturity_max_years` | number | matches if remaining maturity ≤ N years |
 | `maturity_min_years` | number | matches if remaining maturity > N years |
 
-A filter-mode bucket with no current holdings is allowed: it shows up in `/portfolio` as empty, and in `/rebalance` produces a warning ("add a matching ticker manually"). The bot never invents instruments to buy.
-
-A full example using a real account is in [`target.example.yaml`](target.example.yaml).
+A filter-mode bucket always produces a **bucket allocation** in `/rebalance` (not a per-ticker buy) — bonds drift between buckets as maturity ticks down, so the bot reserves money for the category and lets you pick the instrument.
 
 Hard invariants (bot crashes on violation):
 
-- Category weights sum to 100.
-- Within a tickers-mode category, ticker weights sum to 100.
-- Within a subcategories-mode category, subcategory weights sum to 100.
-- Every explicit ticker resolves on a MOEX board at startup.
+- Sum of bucket weights across all categories = 100.
+- Within a bucket, ticker weights sum to 100.
+- Exactly one bucket has `is_cash: true`.
 - An explicit ticker appears in at most one bucket.
-
-Portfolio weight of a bucket = `category_weight × bucket_weight / 100`. So with `stocks.weight=60` and `SBER=70`, SBER targets `60 × 70 / 100 = 42%` of the whole portfolio.
+- A `cash_currencies` entry appears in at most one bucket.
+- Every explicit ticker resolves on a MOEX board at startup.
 
 ## Rebalance math
 
 - `total_after = current_portfolio_value + extra_cash`
-- For each target **bucket**: `gap = total_after × portfolio_weight / 100 − current_value`
-- Positive gaps (underweight) get pro-rata share of cash; overweight buckets are left alone — **the bot never suggests sells**.
-- Within a multi-ticker bucket (filter mode), the bucket's allocation is split among held instruments **pro-rata to their current value** (so internal balance is preserved).
-- An empty filter-mode bucket is reported separately as "empty underweight" — the bot can't pick a ticker for you.
-- Allocations are floored to whole lots; the unspent remainder is reported as `Leftover`.
+- For each non-cash bucket: `gap = total_after × portfolio_weight / 100 − current_value`. Positive gaps (underweight) get a pro-rata share of deployable cash; overweight buckets are left alone — **the bot never suggests sells**.
+- **Cash floor**: cash bucket isn't depleted below `(cash_target − 2 pp)` of `total_after`. So with `cash.weight = 5`, deployment stops at 3% cash.
+- **Drift cap +2 pp**: a buy that would push the destination bucket above `target + 2 pp` is dropped silently. Prevents single-lot overshoots in tiny buckets.
+- **Explicit-ticker bucket** (e.g. `tickers: { SBER: 100 }`) → concrete `BuySuggestion` floored to whole lots. Leftover is then re-tried to promote any bucket that didn't fit a single lot from its pro-rata share.
+- **Filter-mode bucket** (`match: { ... }`) → always a `BucketAllocation` (reserved amount with a hint of what to buy), never a per-ticker suggestion. Bonds drift between buckets as maturity ticks down, so the bot leaves the pick to you.
+- **Filter group throttling**: within a `(category, bond_type)` group of ≥2 filter buckets, the smallest-gap one is dropped so deployable cash concentrates on the most underweight bucket of each kind.
+- Unspent cash is reported as `Остаток`.
 
 ## Out of scope (MVP)
 

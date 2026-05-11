@@ -34,6 +34,7 @@ COPY --chown=bot:bot \
     tinvest.py \
     models.py \
     portfolio.py \
+    classify.py \
     rebalance.py \
     handlers.py \
     formatting.py \
