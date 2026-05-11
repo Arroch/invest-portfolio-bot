@@ -1,0 +1,48 @@
+[project]
+name = "portfolio-bot"
+version = "0.1.0"
+description = "Personal Telegram bot for T-Invest portfolio tracking and rebalancing suggestions."
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "aiogram>=3.28,<4",
+    # Official T-Bank SDK; install via the T-Bank package index:
+    #   pip install --extra-index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple .
+    "t-tech-investments>=0.3,<0.4",
+    "PyYAML>=6.0,<7",
+    "python-dotenv>=1.0,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.23,<1",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = [
+    "bot",
+    "config",
+    "target",
+    "tinvest",
+    "models",
+    "portfolio",
+    "rebalance",
+    "handlers",
+    "formatting",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

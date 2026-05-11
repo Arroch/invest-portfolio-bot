@@ -1,0 +1,17 @@
+base_currency: RUB
+
+categories:
+  stocks:
+    weight: 60
+    tickers:
+      SBER: 40
+      LKOH: 30
+      YNDX: 30
+  bonds:
+    weight: 30
+    tickers:
+      SU26240RMFS0: 100
+  gold:
+    weight: 10
+    tickers:
+      TGLD: 100
