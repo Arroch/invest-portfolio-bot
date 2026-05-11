@@ -31,7 +31,10 @@ class Holding:
 
     @property
     def is_cash(self) -> bool:
-        return self.instrument_type == "currency"
+        # Synthetic cash entries (built from get_positions.money) have no FIGI.
+        # A real instrument with currency-type (e.g. GLDRUB_TOM, USD000UTSTOM) has a FIGI
+        # and is tradeable — we must NOT treat it as cash.
+        return self.instrument_type == "currency" and not self.figi
 
 
 @dataclass(frozen=True)

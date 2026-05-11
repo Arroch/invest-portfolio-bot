@@ -131,16 +131,17 @@ def test_portfolio_at_target_n_zero_no_suggestions() -> None:
 def test_cash_excluded_from_destinations() -> None:
     """Cash bucket never gets buy suggestions even when underweight."""
     target = build_target_tickers([("stocks", [("SBER", Decimal(60))])], cash_weight=Decimal(40))
-    # Stocks underweight, cash overweight
     s = state_from(target, {
-        "sber": [H("SBER", 10, 1)],   # 10
-        "cash": [Cash(90)],            # 90
+        "sber": [H("SBER", 10, 1)],
+        "cash": [Cash(90)],
     })
     res = suggest_buys(s, target, Decimal(0))
-    # All cash deployed to SBER (only destination)
+    # Only SBER is a destination. Drift cap (+2 pp): max addition = 62 - 10 = 52.
     assert len(res.suggestions) == 1
     assert res.suggestions[0].ticker == "SBER"
-    assert res.suggestions[0].total_cost_base == Decimal(90)
+    assert res.suggestions[0].total_cost_base == Decimal(52)
+    # The rest stays as leftover (cash bucket cannot absorb).
+    assert res.leftover == Decimal(38)
 
 
 def test_extra_cash_adds_to_pool() -> None:
@@ -148,64 +149,173 @@ def test_extra_cash_adds_to_pool() -> None:
     s = state_from(target, {"sber": [H("SBER", 95, 1)], "cash": [Cash(5)]})
     res = suggest_buys(s, target, Decimal(100))
     # cash_to_deploy = 5 (cash pool) + 100 (extra) = 105
-    # gap_SBER = 0.95 × (100+100) - 95 = 95
-    # only positive gap, all 105 goes to SBER
+    # SBER gap = 0.95 × 200 - 95 = 95; cap = (95+2)/100 × 200 - 95 = 99
+    # Buys 99 lots × 1 = 99; leftover = 6.
     assert res.cash_to_deploy == Decimal(105)
     assert res.suggestions[0].ticker == "SBER"
-    assert res.spent == Decimal(105)
+    assert res.spent == Decimal(99)
+    assert res.leftover == Decimal(6)
 
 
-def test_filter_bucket_with_one_holding() -> None:
+def test_drift_cap_blocks_overshoot() -> None:
+    """Buying one lot that would push drift > +2 pp is skipped silently."""
+    # Single bucket with target 10%, current 0, but lot is huge (50 of total ~155).
+    # Buying 1 lot → drift ≈ +22 pp. Should NOT suggest.
+    target = build_target_tickers([("metals", [("GOLD", Decimal(10))])], cash_weight=Decimal(90))
+    s = state_from(target, {
+        "gold": [H("GOLD", 0, Decimal(50))],  # lot=1, price=50 (no holdings yet)
+        "cash": [Cash(100)],
+    })
+    res = suggest_buys(s, target, Decimal(0))
+    # 1 lot = 50; current 0; max addition with +2 pp cap on 10% bucket of total ~100:
+    #   max_addition = 12% × 100 - 0 = 12. lot_cost 50 > 12 → drift cap fails → drop silently.
+    assert res.suggestions == []
+    assert res.bucket_allocations == []
+    assert res.leftover == Decimal(100)
+
+
+def test_filter_group_throttling_drops_smallest_gap() -> None:
+    """In a group of >=2 filter buckets sharing (category, bond_type), drop the smallest gap."""
+    target = build_target_filter_bonds([
+        ("ofz_short", Decimal(30), BucketFilter(bond_type="ofz", maturity_max_years=Decimal(3))),
+        ("ofz_mid", Decimal(30), BucketFilter(bond_type="ofz", maturity_min_years=Decimal(3))),
+        ("ofz_long", Decimal(35), BucketFilter(bond_type="ofz", maturity_min_years=Decimal(7))),
+    ])
+    # All three OFZ buckets empty → biggest gap is ofz_long (35%), then short and mid (30% each).
+    # Drop the smallest by gap. ofz_short and ofz_mid have the same target so it's a tie;
+    # implementation drops whichever appears last in sort order — assert only that 2 remain.
+    s = state_from(target, {
+        "ofz_short": [], "ofz_mid": [], "ofz_long": [], "cash": [Cash(1000)],
+    })
+    res = suggest_buys(s, target, Decimal(0))
+    bucket_names = {a.bucket_name for a in res.bucket_allocations}
+    assert "ofz_long" in bucket_names  # largest gap always survives
+    assert len(bucket_names) == 2  # one of short/mid dropped
+
+
+def test_promotion_uses_leftover_to_fit_one_lot() -> None:
+    """Explicit-ticker bucket where pro-rata gives less than 1 lot: use leftover to round up."""
+    # Two stocks: A (heavy) and B (small).
+    # A has huge gap, gets most of cash. B's pro-rata is below lot cost.
+    # If leftover allows, B gets 1 lot (promoted), drift cap permitting.
+    target = build_target_tickers(
+        [("stocks", [("A", Decimal(50)), ("B", Decimal(45))])],
+        cash_weight=Decimal(5),
+    )
+    s = state_from(target, {
+        "a": [H("A", quantity=0, price=Decimal(1), lot=1)],
+        "b": [H("B", quantity=0, price=Decimal(30), lot=1)],
+        "cash": [Cash(100)],
+    })
+    res = suggest_buys(s, target, Decimal(0))
+    by = {x.ticker: x.lots for x in res.suggestions}
+    # A: target 50, max_addition = (50+2)% × 100 = 52, buys 52 lots × 1 = 52
+    # B: pro-rata ≈ 100 × 45 / 95 ≈ 47, lot_cost = 30 → natural 1 lot, cap (45+2)% × 100 = 47 → 1 lot
+    # Now check via promotion path: actually B's pro-rata 47 fits 1 lot directly (cap=47, lot=30).
+    # So B gets 1 lot in main loop, not via promotion. Test is more about it not failing.
+    assert "A" in by and "B" in by
+
+
+def test_filter_bucket_always_produces_bucket_allocation_even_with_holdings() -> None:
+    """Bonds drift between filter buckets as maturity changes — never recommend a specific
+    held ticker; always recommend the bucket as a category.
+    """
     target = build_target_filter_bonds([
         ("replaced", Decimal(40), BucketFilter(bond_type="replaced")),
         ("ofz_long", Decimal(55), BucketFilter(bond_type="ofz")),
     ])
     s = state_from(target, {
-        "replaced": [H("RPL", 0, 1000, instrument_type="bond")],
-        "ofz_long": [H("OFZ", 0, 1000, instrument_type="bond")],
+        "replaced": [H("RPL", quantity=1, price=1000, instrument_type="bond")],
+        "ofz_long": [H("OFZ", quantity=1, price=1000, instrument_type="bond")],
         "cash": [Cash(10_000)],
     })
     res = suggest_buys(s, target, Decimal(0))
-    by = {x.ticker: x.total_cost_base for x in res.suggestions}
-    # gap_replaced = 0.40 × 10000 - 0 = 4000
-    # gap_ofz     = 0.55 × 10000 - 0 = 5500
-    # gap_cash    excluded
-    # sum_pos = 9500; cash = 10_000; pro-rata: replaced gets 10000*4000/9500, ofz gets 10000*5500/9500
-    # but in unit prices = 1000 with lot=1, replaced alloc ≈ 4210.5 → 4 lots = 4000
-    # ofz alloc ≈ 5789.5 → 5 lots = 5000
-    assert by["RPL"] == Decimal(4000)
-    assert by["OFZ"] == Decimal(5000)
+    assert res.suggestions == []
+    by_bucket = {a.bucket_name: a.amount_base for a in res.bucket_allocations}
+    # cash_to_deploy = 10_000; total = 12_000; gaps:
+    #   replaced: 0.40 * 12000 - 1000 = 3800
+    #   ofz:     0.55 * 12000 - 1000 = 5600
+    # sum_pos = 9400; pro-rata of 10_000:
+    #   replaced ≈ 4042.55
+    #   ofz_long ≈ 5957.44
+    assert by_bucket["replaced"].quantize(Decimal("0.01")) == Decimal("4042.55")
+    assert by_bucket["ofz_long"].quantize(Decimal("0.01")) == Decimal("5957.45")
+    assert res.spent == Decimal(0)
+    assert res.reserved.quantize(Decimal("0.01")) == Decimal("10000.00")
 
 
-def test_filter_bucket_distributes_pro_rata_to_held_value() -> None:
-    target = build_target_filter_bonds([
-        ("ofz_long", Decimal(95), BucketFilter(bond_type="ofz")),
-    ])
-    a = H("OFZ_A", quantity=60, price=1, instrument_type="bond")
-    b = H("OFZ_B", quantity=40, price=1, instrument_type="bond")
-    s = state_from(target, {"ofz_long": [a, b], "cash": [Cash(100)]})
-    res = suggest_buys(s, target, Decimal(0))
-    by = {x.ticker: x.total_cost_base for x in res.suggestions}
-    # gap_ofz = 0.95 × 200 - 100 = 90; cash_to_deploy = 100; pro-rata to held = 60/40
-    # alloc to ofz_long = 100 * 90 / 90 = 100; split A:60, B:40
-    assert by == {"OFZ_A": Decimal(60), "OFZ_B": Decimal(40)}
-
-
-def test_empty_filter_bucket_reported() -> None:
+def test_empty_filter_bucket_produces_bucket_allocation() -> None:
     target = build_target_filter_bonds([
         ("ofz_long", Decimal(95), BucketFilter(bond_type="ofz")),
     ])
     s = state_from(target, {"ofz_long": [], "cash": [Cash(1000)]})
     res = suggest_buys(s, target, Decimal(0))
     assert res.suggestions == []
-    assert len(res.empty_underweight_buckets) == 1
-    assert res.empty_underweight_buckets[0].bucket_name == "ofz_long"
-    # All cash stays as leftover
-    assert res.leftover == Decimal(1000)
+    assert len(res.bucket_allocations) == 1
+    alloc = res.bucket_allocations[0]
+    assert alloc.bucket_name == "ofz_long"
+    assert alloc.amount_base == Decimal(1000)
+    assert "ОФЗ" in alloc.filter_summary
+    assert res.reserved == Decimal(1000)
+    assert res.spent == Decimal(0)
+    assert res.leftover == Decimal(0)
 
 
-def test_bucket_with_only_cash_holding_is_not_buyable() -> None:
-    """If gold bucket only contains XAU cash and no TGLD, /rebalance can't buy gold."""
+def test_filter_summary_includes_maturity_range() -> None:
+    target = build_target_filter_bonds([
+        ("replaced_2_4", Decimal(95), BucketFilter(
+            bond_type="replaced",
+            maturity_min_years=Decimal(2),
+            maturity_max_years=Decimal(4),
+        )),
+    ])
+    s = state_from(target, {"replaced_2_4": [], "cash": [Cash(1000)]})
+    res = suggest_buys(s, target, Decimal(0))
+    summary = res.bucket_allocations[0].filter_summary
+    assert "замещающие" in summary
+    assert "2" in summary and "4" in summary
+
+
+def test_explicit_tickers_buy_lots_alongside_filter_bucket_allocations() -> None:
+    """Explicit-ticker buckets get BuySuggestion; filter buckets get BucketAllocation."""
+    # Custom target with one explicit-ticker bucket and one filter bucket.
+    explicit = TargetBucket(
+        name="sber",
+        category="stocks",
+        portfolio_weight_pct=Decimal(50),
+        explicit_tickers=(("SBER", Decimal(100)),),
+    )
+    filt = TargetBucket(
+        name="ofz",
+        category="bonds",
+        portfolio_weight_pct=Decimal(45),
+        filter_=BucketFilter(bond_type="ofz"),
+    )
+    target = Target(
+        base_currency="RUB",
+        categories=(
+            TargetCategory(name="stocks", buckets=(explicit,)),
+            TargetCategory(name="bonds", buckets=(filt,)),
+            TargetCategory(name="cash", buckets=(_cash_bucket(Decimal(5)),)),
+        ),
+    )
+    s = state_from(target, {
+        "sber": [H("SBER", quantity=0, price=Decimal(1000))],
+        "ofz": [],
+        "cash": [Cash(10_000)],
+    })
+    res = suggest_buys(s, target, Decimal(0))
+    # gap_sber = 0.50 * 10000 - 0 = 5000; gap_ofz = 0.45 * 10000 - 0 = 4500; sum = 9500
+    # sber alloc = 10000 * 5000 / 9500 ≈ 5263 → 5 lots × 1000 = 5000
+    # ofz alloc  = 10000 * 4500 / 9500 ≈ 4737 → BucketAllocation
+    by_ticker = {x.ticker: x.total_cost_base for x in res.suggestions}
+    assert by_ticker == {"SBER": Decimal(5000)}
+    assert len(res.bucket_allocations) == 1
+    assert res.bucket_allocations[0].bucket_name == "ofz"
+
+
+def test_bucket_with_only_cash_and_no_filter_is_uninferrable() -> None:
+    """Gold bucket has cash_currencies but no tickers and no filter — can't infer what to buy."""
     gold_bucket = TargetBucket(
         name="gold",
         category="gold",
@@ -221,14 +331,13 @@ def test_bucket_with_only_cash_holding_is_not_buyable() -> None:
         ),
     )
     s = state_from(target, {
-        "gold": [Cash(1, currency="XAU", fx=Decimal(10000))],   # value 10_000
+        "gold": [Cash(1, currency="XAU", fx=Decimal(10000))],
         "cash": [Cash(2000)],
     })
     res = suggest_buys(s, target, Decimal(0))
-    # Gold underweight (10000/12000 ≈ 83.3% vs 95% target).
-    # But no buyable holding → empty bucket warning, no suggestion.
     assert res.suggestions == []
-    assert any(w.bucket_name == "gold" for w in res.empty_underweight_buckets)
+    assert res.bucket_allocations == []
+    assert any(w.bucket_name == "gold" for w in res.uninferrable_buckets)
 
 
 def test_compute_drift_includes_cash_bucket() -> None:

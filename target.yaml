@@ -28,12 +28,12 @@ categories:
 
   bonds:
     buckets:
-      replaced_2_4:
+      replaced_1_3:
         weight: 5
-        match: { bond_type: replaced, maturity_min_years: 2, maturity_max_years: 4 }
-      replaced_4_6:
+        match: { bond_type: replaced, maturity_min_years: 1, maturity_max_years: 3 }
+      replaced_3_6:
         weight: 5
-        match: { bond_type: replaced, maturity_min_years: 4, maturity_max_years: 6 }
+        match: { bond_type: replaced, maturity_min_years: 3, maturity_max_years: 6 }
       ofz_short:
         weight: 4
         match: { bond_type: ofz, maturity_max_years: 3 }
@@ -50,8 +50,7 @@ categories:
         weight: 10
         # XAU-кэш из T-Invest попадает сюда, а не в свободные деньги.
         cash_currencies: [XAU]
-        # Если появится золотой ETF — добавь его сюда:
-        # tickers: { TGLD: 100 }
+        tickers: { GLDRUB_TOM: 100 }
 
   cash:
     buckets:

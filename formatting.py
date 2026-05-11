@@ -98,33 +98,45 @@ def format_rebalance(result: RebalanceResult, base_currency: str) -> str:
             f"{_money(result.cash_to_deploy)} {sign}</b>"
         )
 
-    if not result.suggestions:
+    has_any = result.suggestions or result.bucket_allocations
+    if not has_any:
         if result.cash_to_deploy <= 0:
             lines.append("Nothing to deploy.")
         else:
-            lines.append("No underweight bucket has a buyable holding — see warnings below.")
+            lines.append("No underweight bucket to deploy into — see warnings below.")
     else:
-        lines.append("Suggested buys (rounded down to whole lots):")
+        lines.append("План распределения:")
         lines.append("<pre>")
         for s in result.suggestions:
             line = (
-                f"  [{s.bucket_name:<14}] {s.ticker:<14} buy {s.lots:>3} lots "
+                f"  [{s.bucket_name:<14}] {s.ticker:<14} {s.lots:>4} lots "
                 f"× {_money(s.unit_price_base):>10} {sign} "
                 f"= {_money(s.total_cost_base):>12} {sign}"
             )
             lines.append(line)
+        for a in result.bucket_allocations:
+            line = (
+                f"  [{a.bucket_name:<14}] {'*':<14} "
+                f"{'*':>4} × {'*':>10}     "
+                f"= {_money(a.amount_base):>12} {sign}   "
+                f"({a.filter_summary})"
+            )
+            lines.append(line)
         lines.append("</pre>")
-        lines.append(
-            f"Spent: {_money(result.spent)} {sign}    Leftover: {_money(result.leftover)} {sign}"
-        )
+        totals = [
+            f"Spent: {_money(result.spent)} {sign}",
+            f"Reserved: {_money(result.reserved)} {sign}" if result.reserved > 0 else None,
+            f"Leftover: {_money(result.leftover)} {sign}",
+        ]
+        lines.append("    ".join(t for t in totals if t))
 
-    if result.empty_underweight_buckets:
+    if result.uninferrable_buckets:
         lines.append("")
-        lines.append("<b>⚠ Empty underweight buckets (no matching holding to buy):</b>")
-        for w in result.empty_underweight_buckets:
+        lines.append("<b>⚠ Underweight, но нечего предложить:</b>")
+        for w in result.uninferrable_buckets:
             lines.append(
                 f"  [{w.category}/{w.bucket_name}] target {_pct(w.target_pct)} — "
-                f"gap {_money(w.gap_base)} {sign}. Add a matching ticker manually."
+                f"gap {_money(w.gap_base)} {sign}. Добавь в баккет тикер или filter."
             )
 
     return "\n".join(lines)
