@@ -129,49 +129,58 @@ def test_portfolio_at_target_n_zero_no_suggestions() -> None:
 
 
 def test_cash_excluded_from_destinations() -> None:
-    """Cash bucket never gets buy suggestions even when underweight."""
+    """Cash bucket never gets buy suggestions even when underweight. Cash floor caps deploy."""
     target = build_target_tickers([("stocks", [("SBER", Decimal(60))])], cash_weight=Decimal(40))
     s = state_from(target, {
         "sber": [H("SBER", 10, 1)],
         "cash": [Cash(90)],
     })
     res = suggest_buys(s, target, Decimal(0))
-    # Only SBER is a destination. Drift cap (+2 pp): max addition = 62 - 10 = 52.
+    # Cash floor (target − 2pp = 38%): min_cash_after = 38. Deployable = 90 − 38 = 52.
+    # SBER drift cap also = 52. Spent 52, leftover 0.
+    assert res.cash_to_deploy == Decimal(52)
     assert len(res.suggestions) == 1
     assert res.suggestions[0].ticker == "SBER"
     assert res.suggestions[0].total_cost_base == Decimal(52)
-    # The rest stays as leftover (cash bucket cannot absorb).
-    assert res.leftover == Decimal(38)
+    assert res.leftover == Decimal(0)
 
 
-def test_extra_cash_adds_to_pool() -> None:
+def test_extra_cash_adds_to_pool_with_floor() -> None:
     target = build_target_tickers([("stocks", [("SBER", Decimal(95))])], cash_weight=Decimal(5))
     s = state_from(target, {"sber": [H("SBER", 95, 1)], "cash": [Cash(5)]})
     res = suggest_buys(s, target, Decimal(100))
-    # cash_to_deploy = 5 (cash pool) + 100 (extra) = 105
-    # SBER gap = 0.95 × 200 - 95 = 95; cap = (95+2)/100 × 200 - 95 = 99
-    # Buys 99 lots × 1 = 99; leftover = 6.
-    assert res.cash_to_deploy == Decimal(105)
-    assert res.suggestions[0].ticker == "SBER"
+    # total_after = 200; cash floor = (5−2)% × 200 = 6.
+    # cash_to_deploy = max(0, 5 + 100 − 6) = 99.
+    # SBER drift cap: 99. Buys 99 lots × 1 = 99. Leftover 0.
+    assert res.cash_to_deploy == Decimal(99)
     assert res.spent == Decimal(99)
-    assert res.leftover == Decimal(6)
+    assert res.leftover == Decimal(0)
+
+
+def test_cash_floor_blocks_deploy_when_already_at_floor() -> None:
+    """If cash is at or below floor, /rebalance no-arg should propose nothing."""
+    target = build_target_tickers([("stocks", [("SBER", Decimal(95))])], cash_weight=Decimal(5))
+    # cash = 3% × total — exactly at floor.
+    s = state_from(target, {"sber": [H("SBER", 97, 1)], "cash": [Cash(3)]})
+    res = suggest_buys(s, target, Decimal(0))
+    assert res.cash_to_deploy == Decimal(0)
+    assert res.suggestions == []
 
 
 def test_drift_cap_blocks_overshoot() -> None:
     """Buying one lot that would push drift > +2 pp is skipped silently."""
-    # Single bucket with target 10%, current 0, but lot is huge (50 of total ~155).
-    # Buying 1 lot → drift ≈ +22 pp. Should NOT suggest.
     target = build_target_tickers([("metals", [("GOLD", Decimal(10))])], cash_weight=Decimal(90))
     s = state_from(target, {
-        "gold": [H("GOLD", 0, Decimal(50))],  # lot=1, price=50 (no holdings yet)
+        "gold": [H("GOLD", 0, Decimal(50))],
         "cash": [Cash(100)],
     })
     res = suggest_buys(s, target, Decimal(0))
-    # 1 lot = 50; current 0; max addition with +2 pp cap on 10% bucket of total ~100:
-    #   max_addition = 12% × 100 - 0 = 12. lot_cost 50 > 12 → drift cap fails → drop silently.
+    # Cash floor (90 − 2 = 88%) × 100 = 88. cash_to_deploy = 100 − 88 = 12.
+    # GOLD lot 50 > 12 (drift cap), so dropped silently.
     assert res.suggestions == []
     assert res.bucket_allocations == []
-    assert res.leftover == Decimal(100)
+    assert res.cash_to_deploy == Decimal(12)
+    assert res.leftover == Decimal(12)
 
 
 def test_filter_group_throttling_drops_smallest_gap() -> None:
@@ -232,16 +241,17 @@ def test_filter_bucket_always_produces_bucket_allocation_even_with_holdings() ->
     res = suggest_buys(s, target, Decimal(0))
     assert res.suggestions == []
     by_bucket = {a.bucket_name: a.amount_base for a in res.bucket_allocations}
-    # cash_to_deploy = 10_000; total = 12_000; gaps:
-    #   replaced: 0.40 * 12000 - 1000 = 3800
-    #   ofz:     0.55 * 12000 - 1000 = 5600
-    # sum_pos = 9400; pro-rata of 10_000:
-    #   replaced ≈ 4042.55
-    #   ofz_long ≈ 5957.44
-    assert by_bucket["replaced"].quantize(Decimal("0.01")) == Decimal("4042.55")
-    assert by_bucket["ofz_long"].quantize(Decimal("0.01")) == Decimal("5957.45")
+    # total = 12_000; cash floor (5−2 = 3%) × 12_000 = 360; deployable = 9640.
+    # gaps:
+    #   replaced: 0.40 × 12000 − 1000 = 3800
+    #   ofz_long: 0.55 × 12000 − 1000 = 5600
+    # sum_pos = 9400; pro-rata of 9640:
+    #   replaced ≈ 3897.45
+    #   ofz_long ≈ 5742.55
+    assert by_bucket["replaced"].quantize(Decimal("0.01")) == Decimal("3897.02")
+    assert by_bucket["ofz_long"].quantize(Decimal("0.01")) == Decimal("5742.98")
     assert res.spent == Decimal(0)
-    assert res.reserved.quantize(Decimal("0.01")) == Decimal("10000.00")
+    assert res.reserved.quantize(Decimal("0.01")) == Decimal("9640.00")
 
 
 def test_empty_filter_bucket_produces_bucket_allocation() -> None:
@@ -250,13 +260,14 @@ def test_empty_filter_bucket_produces_bucket_allocation() -> None:
     ])
     s = state_from(target, {"ofz_long": [], "cash": [Cash(1000)]})
     res = suggest_buys(s, target, Decimal(0))
+    # Cash floor (5% target → 3% min): keep 30; deploy 970.
     assert res.suggestions == []
     assert len(res.bucket_allocations) == 1
     alloc = res.bucket_allocations[0]
     assert alloc.bucket_name == "ofz_long"
-    assert alloc.amount_base == Decimal(1000)
+    assert alloc.amount_base == Decimal(970)
     assert "ОФЗ" in alloc.filter_summary
-    assert res.reserved == Decimal(1000)
+    assert res.reserved == Decimal(970)
     assert res.spent == Decimal(0)
     assert res.leftover == Decimal(0)
 

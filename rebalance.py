@@ -127,8 +127,21 @@ def suggest_buys(
 
     used_free_cash = extra_cash == 0
     cash_pool_value = state.free_cash_base
-    cash_to_deploy = cash_pool_value + (Decimal(0) if used_free_cash else extra_cash)
     total_after = state.total_base + (Decimal(0) if used_free_cash else extra_cash)
+
+    # Cash floor: keep at least (cash_target − DRIFT_CAP_PP) % of total in cash. We don't
+    # deplete the cash bucket below the comfort zone even when /rebalance runs.
+    cash_bucket_state = state.cash_bucket
+    if cash_bucket_state is not None:
+        cash_target_pct = cash_bucket_state.bucket.portfolio_weight_pct
+        min_cash_pct = max(Decimal(0), cash_target_pct - DRIFT_CAP_PP)
+        min_cash_after = min_cash_pct / Decimal(100) * total_after
+        cash_to_deploy = max(
+            Decimal(0),
+            cash_pool_value + (Decimal(0) if used_free_cash else extra_cash) - min_cash_after,
+        )
+    else:
+        cash_to_deploy = cash_pool_value + (Decimal(0) if used_free_cash else extra_cash)
 
     destinations = [bs for bs in state.buckets if not bs.bucket.is_cash]
 

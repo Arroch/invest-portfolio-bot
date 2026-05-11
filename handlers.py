@@ -6,7 +6,7 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import Message
 from t_tech.invest import AsyncClient
 
-from formatting import format_error, format_portfolio, format_rebalance
+from formatting import format_error, format_portfolio, format_rebalance, format_untracked
 from portfolio import build_portfolio_state
 from rebalance import compute_drift, suggest_buys
 from target import Target
@@ -22,13 +22,14 @@ def build_router(owner_chat_id: int) -> Router:
     @router.message(CommandStart())
     async def cmd_start(message: Message) -> None:
         await message.answer(
-            "\U0001f44b I track your T-Invest portfolio against target.yaml.\n\n"
-            "Commands:\n"
-            "/portfolio — current state vs target\n"
-            "/rebalance — distribute free cash across underweight positions\n"
-            "/rebalance &lt;amount&gt; — distribute a fresh amount\n"
-            "/help — this message\n\n"
-            "<i>Read-only: I never place orders.</i>"
+            "\U0001f44b Слежу за твоим T-Invest портфелем по target.yaml.\n\n"
+            "Команды:\n"
+            "/portfolio — состояние портфеля vs target\n"
+            "/rebalance — раскидать свободный кэш по underweight\n"
+            "/rebalance &lt;сумма&gt; — раскидать новые средства\n"
+            "/untracked — позиции вне target\n"
+            "/help — это сообщение\n\n"
+            "<i>Read-only: заявок не выставляю.</i>"
         )
 
     @router.message(Command("help"))
@@ -78,5 +79,20 @@ def build_router(owner_chat_id: int) -> Router:
         except Exception as e:
             log.exception("rebalance command failed")
             await message.answer(format_error(f"Rebalance failed: {e}"))
+
+    @router.message(Command("untracked"))
+    async def cmd_untracked(
+        message: Message,
+        tinvest: AsyncClient,
+        account_id: str,
+        target: Target,
+        figi_map: dict[str, Instrument],
+    ) -> None:
+        try:
+            state = await build_portfolio_state(tinvest, account_id, target, figi_map)
+            await message.answer(format_untracked(state))
+        except Exception as e:
+            log.exception("untracked command failed")
+            await message.answer(format_error(f"Untracked fetch failed: {e}"))
 
     return router
