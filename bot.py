@@ -3,6 +3,7 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from t_tech.invest import AsyncClient
 
@@ -38,8 +39,12 @@ async def main() -> None:
         for ticker, info in figi_map.items():
             log.info("  %s -> %s lot=%d %s", ticker, info.figi, info.lot, info.currency)
 
+        session = AiohttpSession(proxy=cfg.telegram_proxy_url) if cfg.telegram_proxy_url else None
+        if session is not None:
+            log.info("Using Telegram proxy: %s", _scrub_proxy(cfg.telegram_proxy_url))
         bot = Bot(
             cfg.bot_token,
+            session=session,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         )
         dp = Dispatcher()
@@ -52,6 +57,15 @@ async def main() -> None:
         await bot.delete_webhook(drop_pending_updates=True)
         log.info("Starting polling. Owner chat id: %d", cfg.owner_chat_id)
         await dp.start_polling(bot)
+
+
+def _scrub_proxy(url: str) -> str:
+    if "@" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    creds, host = rest.rsplit("@", 1)
+    user = creds.split(":", 1)[0] if ":" in creds else creds
+    return f"{scheme}://{user}:***@{host}"
 
 
 if __name__ == "__main__":

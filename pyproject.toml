@@ -10,6 +10,8 @@ dependencies = [
     "t-tech-investments>=0.3,<0.4",
     "PyYAML>=6.0,<7",
     "python-dotenv>=1.0,<2",
+    # Enables HTTP/SOCKS proxies for the Telegram session via AiohttpSession(proxy=...).
+    "aiohttp-socks>=0.10,<1",
 ]
 
 [project.optional-dependencies]

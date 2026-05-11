@@ -79,6 +79,34 @@ Update:
 git pull && docker compose up -d --build
 ```
 
+### 8. Telegram proxy (optional)
+
+If the server's IP can't reach `api.telegram.org` directly (typical for Russian hosting providers, where Telegram is blocked but T-Invest is reachable), put a proxy URL in `.env`:
+
+```bash
+TELEGRAM_PROXY_URL=socks5://user:pass@1.2.3.4:1080
+```
+
+Supported schemes: `http`, `https`, `socks4`, `socks5`. **MTProto proxies don't work** — they speak Telegram's client protocol, not Bot API HTTPS. Only T-Bot traffic goes through the proxy; T-Invest connects directly.
+
+**IPv6 proxies** (cheaper to rent): wrap the host in square brackets, e.g.
+
+```bash
+TELEGRAM_PROXY_URL=socks5://user:pass@[2001:db8::1]:1080
+```
+
+Docker's default bridge network is IPv4-only — the container has no IPv6 stack out of the box. Two ways to fix it on Linux:
+
+1. **Easiest** — uncomment `network_mode: host` in [docker-compose.yml](docker-compose.yml). Container shares the host's network namespace and inherits its IPv6.
+2. **Cleaner** — enable IPv6 in Docker daemon (`/etc/docker/daemon.json` → `"ipv6": true` with `"fixed-cidr-v6"`), then `systemctl restart docker`.
+
+Sanity-check the proxy from the host (or from the container after `docker compose up -d`):
+
+```bash
+curl -x socks5h://user:pass@[2001:db8::1]:1080 https://api.telegram.org/
+docker compose exec bot python -c "import socket; print(socket.create_connection(('api.telegram.org', 443), timeout=5))"
+```
+
 ## Target schema
 
 The target is a flat list of **buckets**, grouped under **categories** for display only. Each bucket's `weight` is a percentage of the **whole portfolio**, and the sum across all buckets must equal 100. Categories themselves carry no weight — they're just labels.

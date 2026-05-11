@@ -6,6 +6,9 @@ services:
     env_file: .env
     volumes:
       - ./target.yaml:/app/target.yaml:ro
+    # Uncomment when TELEGRAM_PROXY_URL is an IPv6 host. Docker bridge network is
+    # IPv4-only by default; host networking gives the container the host's IPv6.
+    # network_mode: host
     logging:
       driver: json-file
       options:
