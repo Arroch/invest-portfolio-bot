@@ -79,7 +79,43 @@ Update:
 git pull && docker compose up -d --build
 ```
 
-### 8. Telegram proxy (optional)
+### 8. Autostart on server reboot (systemd, optional)
+
+`docker-compose.yml` already has `restart: unless-stopped`, so as long as Docker daemon is enabled at boot (`systemctl is-enabled docker` → `enabled`, the default), the container comes back after a reboot. The systemd unit below adds explicit on/off control and centralised logs.
+
+Run once on the server (replace the path if you cloned elsewhere):
+
+```bash
+PROJECT_DIR=$HOME/invest-portfolio-bot
+sudo sed \
+  -e "s|{{PROJECT_DIR}}|${PROJECT_DIR}|g" \
+  -e "s|{{USER}}|${USER}|g" \
+  "${PROJECT_DIR}/scripts/invest-portfolio-bot.service" \
+  > /etc/systemd/system/invest-portfolio-bot.service
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now invest-portfolio-bot.service
+```
+
+Operating it:
+
+```bash
+systemctl status invest-portfolio-bot      # is it up?
+sudo systemctl restart invest-portfolio-bot
+sudo systemctl stop invest-portfolio-bot   # graceful `docker compose down`
+journalctl -u invest-portfolio-bot -f      # systemd-side logs
+docker compose logs -f                     # bot logs as before
+```
+
+To remove autostart:
+
+```bash
+sudo systemctl disable --now invest-portfolio-bot.service
+sudo rm /etc/systemd/system/invest-portfolio-bot.service
+sudo systemctl daemon-reload
+```
+
+### 9. Telegram proxy (optional)
 
 If the server's IP can't reach `api.telegram.org` directly (typical for Russian hosting providers, where Telegram is blocked but T-Invest is reachable), put a proxy URL in `.env`:
 

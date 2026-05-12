@@ -1,0 +1,19 @@
+[Unit]
+Description=Personal T-Invest portfolio Telegram bot (docker compose)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Replace {{PROJECT_DIR}} and {{USER}} during install (see README).
+WorkingDirectory={{PROJECT_DIR}}
+User={{USER}}
+Group={{USER}}
+ExecStart={{PROJECT_DIR}}/scripts/start.sh
+ExecStop=/usr/bin/docker compose -f {{PROJECT_DIR}}/docker-compose.yml down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
