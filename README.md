@@ -83,19 +83,21 @@ git pull && docker compose up -d --build
 
 `docker-compose.yml` already has `restart: unless-stopped`, so as long as Docker daemon is enabled at boot (`systemctl is-enabled docker` → `enabled`, the default), the container comes back after a reboot. The systemd unit below adds explicit on/off control and centralised logs.
 
-Run once on the server (replace the path if you cloned elsewhere):
+Run once on the server (adjust `PROJECT_DIR` if you cloned elsewhere):
 
 ```bash
 PROJECT_DIR=$HOME/invest-portfolio-bot
-sudo sed \
+sed \
   -e "s|{{PROJECT_DIR}}|${PROJECT_DIR}|g" \
   -e "s|{{USER}}|${USER}|g" \
   "${PROJECT_DIR}/scripts/invest-portfolio-bot.service" \
-  > /etc/systemd/system/invest-portfolio-bot.service
+| sudo tee /etc/systemd/system/invest-portfolio-bot.service > /dev/null
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now invest-portfolio-bot.service
 ```
+
+> Note: `sed | sudo tee` — а не `sudo sed > file` — потому что редирект `>` исполняется твоей шеллом до `sudo`, и записать в `/etc/systemd/system/` без прав не получится.
 
 Operating it:
 
