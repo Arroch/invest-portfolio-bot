@@ -1,0 +1,12 @@
+services:
+  bot:
+    # Enable when the bot must use host networking.
+    #
+    # Common cases:
+    # - TELEGRAM_PROXY_URL points to a proxy bound to 127.0.0.1 on the host,
+    #   e.g. local Xray/sing-box SOCKS:
+    #     TELEGRAM_PROXY_URL=socks5://127.0.0.1:10808
+    # - TELEGRAM_PROXY_URL points to an IPv6 proxy and Docker bridge has no IPv6.
+    #
+    # Docker Compose automatically loads docker-compose.override.yml.
+    network_mode: host

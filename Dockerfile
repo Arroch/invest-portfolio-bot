@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+COPY certs/russian_trusted_root_ca.crt /usr/local/share/ca-certificates/russian_trusted_root_ca.crt
+RUN update-ca-certificates
+
 WORKDIR /app
 COPY pyproject.toml ./
 RUN python -m venv /opt/venv
@@ -21,6 +24,9 @@ FROM python:3.12-slim AS runtime
 
 RUN groupadd -r bot && useradd -r -g bot -d /app bot \
     && mkdir -p /app && chown bot:bot /app
+
+COPY certs/russian_trusted_root_ca.crt /usr/local/share/ca-certificates/russian_trusted_root_ca.crt
+RUN update-ca-certificates
 
 COPY --from=build /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" \
