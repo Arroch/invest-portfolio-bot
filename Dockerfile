@@ -2,13 +2,14 @@
 FROM python:3.12-slim AS build
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_CERT=/etc/ssl/certs/ca-certificates.crt
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY certs/russian_trusted_root_ca.crt /usr/local/share/ca-certificates/russian_trusted_root_ca.crt
+COPY certs/*.crt /usr/local/share/ca-certificates/
 RUN update-ca-certificates
 
 WORKDIR /app
@@ -25,7 +26,7 @@ FROM python:3.12-slim AS runtime
 RUN groupadd -r bot && useradd -r -g bot -d /app bot \
     && mkdir -p /app && chown bot:bot /app
 
-COPY certs/russian_trusted_root_ca.crt /usr/local/share/ca-certificates/russian_trusted_root_ca.crt
+COPY certs/*.crt /usr/local/share/ca-certificates/
 RUN update-ca-certificates
 
 COPY --from=build /opt/venv /opt/venv
