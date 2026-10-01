@@ -3,7 +3,7 @@ from decimal import Decimal, InvalidOperation
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import Message
+from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 from t_tech.invest import AsyncClient
 
 from formatting import format_error, format_portfolio, format_rebalance, format_untracked
@@ -13,6 +13,20 @@ from target import Target
 from tinvest import Instrument
 
 log = logging.getLogger(__name__)
+
+
+def main_menu_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="/portfolio"),
+                KeyboardButton(text="/rebalance"),
+            ]
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Выбери действие",
+    )
 
 
 def build_router(owner_chat_id: int) -> Router:
@@ -29,7 +43,8 @@ def build_router(owner_chat_id: int) -> Router:
             "/rebalance &lt;сумма&gt; — раскидать новые средства\n"
             "/untracked — позиции вне target\n"
             "/help — это сообщение\n\n"
-            "<i>Read-only: заявок не выставляю.</i>"
+            "<i>Read-only: заявок не выставляю.</i>",
+            reply_markup=main_menu_keyboard(),
         )
 
     @router.message(Command("help"))
